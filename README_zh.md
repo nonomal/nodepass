@@ -4,6 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/yosebyte/nodepass)](https://github.com/yosebyte/nodepass/releases)
 [![GitHub downloads](https://img.shields.io/github/downloads/yosebyte/nodepass/total.svg)](https://github.com/yosebyte/nodepass/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yosebyte/nodepass)](https://goreportcard.com/report/github.com/yosebyte/nodepass)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 ![GitHub last commit](https://img.shields.io/github/last-commit/yosebyte/nodepass)
 
 [English](README.md) | 简体中文
@@ -32,13 +33,11 @@
   - 智能连接池，具备实时容量自适应功能
   - 基于网络状况的动态间隔调整
   - 高负载下保持最小资源占用
-  - 网络中断后自动恢复连接
 
 - **🧰 简单配置**
   - 零配置文件设计
   - 简洁的命令行参数
   - 环境变量支持性能精细调优
-  - 为大多数使用场景提供智能默认值
 
 ## 📋 快速开始
 
@@ -99,7 +98,7 @@ nodepass "master://:10101/api?log=debug&tls=1"
 
 ## 📄 许可协议
 
-`NodePass`项目根据[MIT许可证](LICENSE)授权。
+`NodePass`项目根据[BSD 3-Clause许可证](LICENSE)授权。
 
 ## 🤝 赞助商
 

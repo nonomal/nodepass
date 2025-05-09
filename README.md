@@ -4,6 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/yosebyte/nodepass)](https://github.com/yosebyte/nodepass/releases)
 [![GitHub downloads](https://img.shields.io/github/downloads/yosebyte/nodepass/total.svg)](https://github.com/yosebyte/nodepass/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yosebyte/nodepass)](https://goreportcard.com/report/github.com/yosebyte/nodepass)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 ![GitHub last commit](https://img.shields.io/github/last-commit/yosebyte/nodepass)
 
 English | [简体中文](README_zh.md)
@@ -32,13 +33,11 @@ English | [简体中文](README_zh.md)
   - Smart connection pooling with real-time capacity adaptation
   - Dynamic interval adjustment based on network conditions
   - Minimal resource footprint even under heavy load
-  - Automatic recovery from network disruptions
 
 - **🧰 Simple Configuration**
   - Zero configuration files required
   - Simple command-line parameters
   - Environment variables for fine-tuning performance
-  - Intelligent defaults for most use cases
 
 ## 📋 Quick Start
 
@@ -99,7 +98,7 @@ Join our [Telegram channel](https://t.me/NodePassChannel) for updates and commun
 
 ## 📄 License
 
-Project `NodePass` is licensed under the [MIT LICENSE](LICENSE).
+Project `NodePass` is licensed under the [BSD 3-Clause License](LICENSE).
 
 ## 🤝 Sponsors
 

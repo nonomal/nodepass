@@ -4,7 +4,6 @@ package internal
 import (
 	"bufio"
 	"context"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -13,8 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yosebyte/x/conn"
-	"github.com/yosebyte/x/log"
+	"github.com/NodePassProject/conn"
+	"github.com/NodePassProject/logs"
+	"github.com/NodePassProject/pool"
 )
 
 // Client 实现客户端模式功能
@@ -26,7 +26,7 @@ type Client struct {
 }
 
 // NewClient 创建新的客户端实例
-func NewClient(parsedURL *url.URL, logger *log.Logger) *Client {
+func NewClient(parsedURL *url.URL, logger *logs.Logger) *Client {
 	client := &Client{
 		Common: Common{
 			logger: logger,
@@ -79,7 +79,7 @@ func (c *Client) Start() error {
 	}
 
 	// 初始化隧道连接池
-	c.tunnelPool = conn.NewClientPool(
+	c.tunnelPool = pool.NewClientPool(
 		minPoolCapacity,
 		maxPoolCapacity,
 		minPoolInterval,
@@ -92,7 +92,6 @@ func (c *Client) Start() error {
 
 	go c.tunnelPool.ClientManager()
 	go c.clientLaunch()
-	go c.statsReporter()
 
 	return c.signalQueue()
 }
@@ -240,6 +239,7 @@ func (c *Client) clientTCPOnce(id string) {
 	remoteConn := c.tunnelPool.ClientGet(id)
 	if remoteConn == nil {
 		c.logger.Error("Get failed: %v", id)
+		c.tunnelPool.AddError()
 		return
 	}
 
@@ -272,14 +272,12 @@ func (c *Client) clientTCPOnce(id string) {
 	c.logger.Debug("Starting exchange: %v <-> %v", remoteConn.LocalAddr(), targetConn.LocalAddr())
 
 	// 交换数据
-	bytesReceived, bytesSent, err := conn.DataExchange(remoteConn, targetConn)
+	bytesReceived, bytesSent, _ := conn.DataExchange(remoteConn, targetConn)
 	c.AddTCPStats(uint64(bytesReceived), uint64(bytesSent))
 
-	if err == io.EOF {
-		c.logger.Debug("Exchange complete: %v bytes exchanged", bytesReceived+bytesSent)
-	} else {
-		c.logger.Debug("Exchange complete: %v", err)
-	}
+	// 交换完成，广播统计信息
+	c.logger.Debug("Exchange complete: TRAFFIC_STATS|TCP_RX=%v|TCP_TX=%v|UDP_RX=%v|UDP_TX=%v",
+		c.tcpBytesReceived, c.tcpBytesSent, c.udpBytesReceived, c.udpBytesSent)
 }
 
 // clientUDPOnce 处理单个UDP请求
@@ -290,6 +288,7 @@ func (c *Client) clientUDPOnce(id string) {
 	remoteConn := c.tunnelPool.ClientGet(id)
 	if remoteConn == nil {
 		c.logger.Error("Get failed: %v", id)
+		c.tunnelPool.AddError()
 		return
 	}
 
@@ -303,15 +302,6 @@ func (c *Client) clientUDPOnce(id string) {
 	}()
 
 	c.logger.Debug("Tunnel connection: %v <-> %v", remoteConn.LocalAddr(), remoteConn.RemoteAddr())
-
-	// 读取来自远程连接的数据
-	buffer := make([]byte, udpDataBufSize)
-	n, err := remoteConn.Read(buffer)
-	if err != nil {
-		c.logger.Error("Read failed: %v", err)
-		return
-	}
-	c.AddUDPReceived(uint64(n))
 
 	// 连接到目标UDP地址
 	targetUDPConn, err := net.DialTimeout("udp", c.targetUDPAddr.String(), udpDialTimeout)
@@ -329,33 +319,25 @@ func (c *Client) clientUDPOnce(id string) {
 	c.targetUDPConn = targetUDPConn.(*net.UDPConn)
 	c.logger.Debug("Target connection: %v <-> %v", targetUDPConn.LocalAddr(), targetUDPConn.RemoteAddr())
 
-	// 发送数据到目标
-	_, err = targetUDPConn.Write(buffer[:n])
+	// 处理UDP/TCP数据交换
+	udpToTcp, tcpToUdp, err := conn.DataTransfer(
+		c.targetUDPConn,
+		remoteConn,
+		nil, // 无UDP地址，自动确定为客户端模式
+		nil,
+		udpDataBufSize,
+		udpReadTimeout,
+	)
+
 	if err != nil {
-		c.logger.Error("Write failed: %v", err)
+		c.logger.Error("Transfer failed: %v", err)
 		return
 	}
 
-	// 设置读取超时并等待响应
-	if err := targetUDPConn.SetReadDeadline(time.Now().Add(udpReadTimeout)); err != nil {
-		c.logger.Error("Set deadline failed: %v", err)
-		return
-	}
+	c.AddUDPReceived(tcpToUdp)
+	c.AddUDPSent(udpToTcp)
 
-	n, _, err = targetUDPConn.(*net.UDPConn).ReadFromUDP(buffer)
-	if err != nil {
-		c.logger.Error("Read failed: %v", err)
-		return
-	}
-
-	// 响应写回远程连接
-	_, err = remoteConn.Write(buffer[:n])
-	if err != nil {
-		c.logger.Error("Write failed: %v", err)
-		return
-	}
-
-	c.AddUDPSent(uint64(n))
-	bytesReceived, bytesSent := c.GetUDPStats()
-	c.logger.Debug("Transfer complete: %v bytes transferred", bytesReceived+bytesSent)
+	// 交换完成，广播统计信息
+	c.logger.Debug("Transfer complete: TRAFFIC_STATS|TCP_RX=%v|TCP_TX=%v|UDP_RX=%v|UDP_TX=%v",
+		c.tcpBytesReceived, c.tcpBytesSent, c.udpBytesReceived, c.udpBytesSent)
 }

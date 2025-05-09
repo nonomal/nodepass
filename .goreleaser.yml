@@ -30,10 +30,7 @@ builds:
       - -s -w -X main.version={{ .Tag }}
 
 archives:
-  - format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
+  - formats: [tar.gz]
 release:
   prerelease: true
   mode: replace
