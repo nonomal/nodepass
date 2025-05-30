@@ -1,9 +1,12 @@
 <div align="center">
-  <img src="https://cdn.yobc.de/assets/np-poster.png" alt="nodepass" width="500">
+  <img src="https://cdn.yobc.de/assets/np-poster.png" alt="nodepass" width="448">
 
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 [![GitHub release](https://img.shields.io/github/v/release/yosebyte/nodepass)](https://github.com/yosebyte/nodepass/releases)
 [![GitHub downloads](https://img.shields.io/github/downloads/yosebyte/nodepass/total.svg)](https://github.com/yosebyte/nodepass/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yosebyte/nodepass)](https://goreportcard.com/report/github.com/yosebyte/nodepass)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yosebyte/nodepass.svg)](https://pkg.go.dev/github.com/yosebyte/nodepass)
 ![GitHub last commit](https://img.shields.io/github/last-commit/yosebyte/nodepass)
 
 English | [简体中文](README_zh.md)
@@ -32,13 +35,11 @@ English | [简体中文](README_zh.md)
   - Smart connection pooling with real-time capacity adaptation
   - Dynamic interval adjustment based on network conditions
   - Minimal resource footprint even under heavy load
-  - Automatic recovery from network disruptions
 
 - **🧰 Simple Configuration**
   - Zero configuration files required
   - Simple command-line parameters
   - Environment variables for fine-tuning performance
-  - Intelligent defaults for most use cases
 
 ## 📋 Quick Start
 
@@ -47,7 +48,7 @@ English | [简体中文](README_zh.md)
 - **Pre-built Binaries**: Download from [releases page](https://github.com/yosebyte/nodepass/releases).
 - **Go Install**: `go install github.com/yosebyte/nodepass/cmd/nodepass@latest`
 - **Container Image**: `docker pull ghcr.io/yosebyte/nodepass:latest`
-- **Management Script**: `bash <(curl -sL https://cdn.yobc.de/shell/nodepass.sh)`
+- **Deployment Script**: `bash <(curl -sSL https://run.nodepass.eu/np.sh)`
 
 ### 🚀 Basic Usage
 
@@ -99,7 +100,7 @@ Join our [Telegram channel](https://t.me/NodePassChannel) for updates and commun
 
 ## 📄 License
 
-Project `NodePass` is licensed under the [MIT LICENSE](LICENSE).
+Project `NodePass` is licensed under the [BSD 3-Clause License](LICENSE).
 
 ## 🤝 Sponsors
 
