@@ -1,6 +1,17 @@
 # Usage Instructions
 
-NodePass creates tunnels with an unencrypted TCP control channel and configurable TLS encryption options for data exchange. This guide covers the three operating modes and explains how to use each effectively.
+NodePass creates tunnels with an unencrypted TCP control channel and configurable TLS #### Examples
+
+```bash
+# Client single-end forwarding mode - Local proxy listening on port 1080, forwarding to target server
+nodepass client://127.0.0.1:1080/target.example.com:8080?log=debug
+
+# Connect to NodePass server and automatically adopt its TLS security policy - Client sends mode
+nodepass client://server.example.com:10101/127.0.0.1:8080
+
+# Connect with debug logging - Client receives mode
+nodepass client://server.example.com:10101/192.168.1.100:8080?log=debug
+```n options for data exchange. This guide covers the three operating modes and explains how to use each effectively.
 
 ## Command Line Syntax
 
@@ -13,8 +24,8 @@ nodepass <core>://<tunnel_addr>/<target_addr>?log=<level>&tls=<mode>&crt=<cert_f
 Where:
 - `<core>`: Specifies the operating mode (`server`, `client`, or `master`)
 - `<tunnel_addr>`: The tunnel endpoint address for control channel communications 
-- `<target_addr>`: The destination address for forwarded traffic (or API prefix in master mode)
-- `<level>`: Log verbosity level (`debug`, `info`, `warn`, `error`, or `fatal`)
+- `<target_addr>`: The destination address for business data with bidirectional flow support (or API prefix in master mode)
+- `<level>`: Log verbosity level (`debug`, `info`, `warn`, `error`, or `event`)
 - `<mode>`: TLS security level for data channels (`0`, `1`, or `2`) - server/master modes only
 - `<cert_file>`: Path to certificate file (when `tls=2`) - server/master modes only
 - `<key_file>`: Path to private key file (when `tls=2`) - server/master modes only
@@ -25,7 +36,7 @@ NodePass offers three complementary operating modes to suit various deployment s
 
 ### Server Mode
 
-Server mode listens for client connections and forwards traffic from a target address through the tunnel.
+Server mode establishes tunnel control channels and supports bidirectional data flow forwarding.
 
 ```bash
 nodepass server://<tunnel_addr>/<target_addr>?log=<level>&tls=<mode>&crt=<cert_file>&key=<key_file>
@@ -34,8 +45,8 @@ nodepass server://<tunnel_addr>/<target_addr>?log=<level>&tls=<mode>&crt=<cert_f
 #### Parameters
 
 - `tunnel_addr`: Address for the TCP tunnel endpoint (control channel) that clients will connect to (e.g., 10.1.0.1:10101)
-- `target_addr`: Address where the server listens for incoming connections (TCP and UDP) that will be tunneled to clients (e.g., 10.1.0.1:8080)
-- `log`: Log level (debug, info, warn, error, fatal)
+- `target_addr`: The destination address for business data with bidirectional flow support (e.g., 10.1.0.1:8080)
+- `log`: Log level (debug, info, warn, error, event)
 - `tls`: TLS encryption mode for the target data channel (0, 1, 2)
   - `0`: No TLS encryption (plain TCP/UDP)
   - `1`: Self-signed certificate (automatically generated)
@@ -45,28 +56,35 @@ nodepass server://<tunnel_addr>/<target_addr>?log=<level>&tls=<mode>&crt=<cert_f
 
 #### How Server Mode Works
 
-In server mode, NodePass:
+In server mode, NodePass supports two data flow directions:
+
+**Mode 1: Server Receives Traffic** (target_addr is local address)
 1. Listens for TCP tunnel connections (control channel) on `tunnel_addr`
 2. Listens for incoming TCP and UDP traffic on `target_addr` 
-3. When a connection arrives at `target_addr`, it signals the connected client through the unencrypted TCP tunnel
+3. When a connection arrives at `target_addr`, it signals the connected client through the control channel
 4. Creates a data channel for each connection with the specified TLS encryption level
+
+**Mode 2: Server Sends Traffic** (target_addr is remote address)
+1. Listens for TCP tunnel connections (control channel) on `tunnel_addr`
+2. Waits for clients to listen locally and receive connections through the tunnel
+3. Establishes connections to remote `target_addr` and forwards data
 
 #### Examples
 
 ```bash
-# No TLS encryption for data channel
+# No TLS encryption for data channel - Server receives mode
 nodepass "server://10.1.0.1:10101/10.1.0.1:8080?log=debug&tls=0"
 
-# Self-signed certificate (auto-generated)
-nodepass "server://10.1.0.1:10101/10.1.0.1:8080?log=debug&tls=1"
+# Self-signed certificate (auto-generated) - Server sends mode
+nodepass "server://10.1.0.1:10101/192.168.1.100:8080?log=debug&tls=1"
 
-# Custom domain certificate
+# Custom domain certificate - Server receives mode
 nodepass "server://10.1.0.1:10101/10.1.0.1:8080?log=debug&tls=2&crt=/path/to/cert.pem&key=/path/to/key.pem"
 ```
 
 ### Client Mode
 
-Client mode connects to a NodePass server and forwards traffic to a local target address.
+Client mode connects to a NodePass server and supports bidirectional data flow forwarding.
 
 ```bash
 nodepass client://<tunnel_addr>/<target_addr>?log=<level>
@@ -75,25 +93,39 @@ nodepass client://<tunnel_addr>/<target_addr>?log=<level>
 #### Parameters
 
 - `tunnel_addr`: Address of the NodePass server's tunnel endpoint to connect to (e.g., 10.1.0.1:10101)
-- `target_addr`: Local address where traffic will be forwarded to (e.g., 127.0.0.1:8080)
-- `log`: Log level (debug, info, warn, error, fatal)
+- `target_addr`: The destination address for business data with bidirectional flow support (e.g., 127.0.0.1:8080)
+- `log`: Log level (debug, info, warn, error, event)
 
 #### How Client Mode Works
 
-In client mode, NodePass:
-1. Connects to the server's unencrypted TCP tunnel endpoint (control channel) at `tunnel_addr`
+In client mode, NodePass supports three operating modes:
+
+**Mode 1: Client Single-End Forwarding** (when tunnel address is local)
+1. Listens for TCP and UDP connections on the local tunnel address
+2. Uses connection pooling technology to pre-establish TCP connections to target address, eliminating connection latency
+3. Directly forwards received traffic to the target address with high performance
+4. No handshake with server required, enables point-to-point direct forwarding
+5. Suitable for local proxy and simple forwarding scenarios
+
+**Mode 2: Client Receives Traffic** (when server sends traffic)
+1. Connects to the server's TCP tunnel endpoint (control channel)
+2. Listens locally and waits for connections through the tunnel
+3. Establishes connections to local `target_addr` and forwards data
+
+**Mode 3: Client Sends Traffic** (when server receives traffic)
+1. Connects to the server's TCP tunnel endpoint (control channel)
 2. Listens for signals from the server through this control channel
 3. When a signal is received, establishes a data connection with the TLS security level specified by the server
-4. Creates a local connection to `target_addr` and forwards traffic
+4. Creates a connection to `target_addr` and forwards traffic
 
 #### Examples
 
 ```bash
-# Connect to a NodePass server and automatically adopt its TLS security policy
+# Connect to a NodePass server and automatically adopt its TLS security policy - Client sends mode
 nodepass client://server.example.com:10101/127.0.0.1:8080
 
-# Connect with debug logging
-nodepass client://server.example.com:10101/127.0.0.1:8080?log=debug
+# Connect with debug logging - Client receives mode
+nodepass client://server.example.com:10101/192.168.1.100:8080?log=debug
 ```
 
 ### Master Mode (API)
@@ -108,7 +140,7 @@ nodepass master://<api_addr>[<prefix>]?log=<level>&tls=<mode>&crt=<cert_file>&ke
 
 - `api_addr`: Address where the API service will listen (e.g., 0.0.0.0:9090)
 - `prefix`: Optional API prefix path (e.g., /management). Default is `/api`
-- `log`: Log level (debug, info, warn, error, fatal)
+- `log`: Log level (debug, info, warn, error, event)
 - `tls`: TLS encryption mode for the API service (0, 1, 2)
   - `0`: No TLS encryption (HTTP)
   - `1`: Self-signed certificate (HTTPS with auto-generated cert)
@@ -177,6 +209,31 @@ curl -X PUT http://localhost:9090/api/v1/instances/{id} \
   -H "Content-Type: application/json" \
   -d '{"action":"restart"}'
 ```
+
+## Bidirectional Data Flow Explanation
+
+NodePass supports flexible bidirectional data flow configuration:
+
+### Client Single-End Forwarding Mode
+- **Client**: Listens on local tunnel address, uses connection pooling technology to directly forward to target address
+- **Connection Pool Optimization**: Pre-establishes TCP connections, eliminates connection latency, provides high-performance forwarding
+- **No Server Required**: Operates independently without server handshake
+- **Use Case**: Local proxy, simple port forwarding, testing environments, high-performance forwarding
+
+### Server Receives Mode (dataFlow: "-")
+- **Server**: Listens for incoming connections on target_addr, forwards through tunnel to client
+- **Client**: Connects to local target_addr to provide services
+- **Use Case**: Expose internal services to external access
+
+### Server Sends Mode (dataFlow: "+")  
+- **Server**: Connects to remote target_addr to fetch data, sends through tunnel to client
+- **Client**: Listens locally to receive connections from server
+- **Use Case**: Access remote services through tunnel proxy
+
+The system automatically selects the appropriate operation mode based on tunnel and target addresses:
+- If the client's tunnel address is a local address, enables single-end forwarding mode
+- If target address is a local address, uses Server Receives Mode
+- If target address is a remote address, uses Server Sends Mode
 
 ## Next Steps
 
