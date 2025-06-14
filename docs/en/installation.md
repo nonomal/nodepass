@@ -75,18 +75,14 @@ docker run -d --name nodepass-client \
 
 ### Option 5: Using Management Script (Linux Only)
 
-For Linux systems, we provide an interactive management script for easy installation and service management:
+For Linux systems, we provide a one-click script:
 
 ```bash
-bash <(curl -sL https://cdn.yobc.de/shell/nodepass.sh)
+bash <(curl -sSL https://run.nodepass.eu/np.sh)
 ```
 
-This script provides an interactive menu to:
-- Install or update NodePass
-- Create and configure multiple nodepass services
-- Manage (start/stop/restart/delete) nodepass services
-- Set up systemd services automatically
-- Configure client and server modes with customizable options
+- This script provides easy-to-use master mode (API mode) installation, configuration, and management functions.
+- For details, please refer to [https://github.com/NodePassProject/npsh](https://github.com/NodePassProject/npsh)
 
 ## Verifying Installation
 
@@ -95,8 +91,6 @@ After installation, verify that NodePass is correctly installed by checking the 
 ```bash
 nodepass
 ```
-
-![np-cli](https://cdn.yobc.de/assets/np-cli.png)
 
 ## Next Steps
 

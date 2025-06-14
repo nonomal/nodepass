@@ -1,21 +1,24 @@
 <div align="center">
-  <img src="https://cdn.yobc.de/assets/np-poster.png" alt="nodepass" width="500">
+  <img src="https://cdn.yobc.de/assets/np-poster.png" alt="nodepass" width="448">
 
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 [![GitHub release](https://img.shields.io/github/v/release/yosebyte/nodepass)](https://github.com/yosebyte/nodepass/releases)
 [![GitHub downloads](https://img.shields.io/github/downloads/yosebyte/nodepass/total.svg)](https://github.com/yosebyte/nodepass/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yosebyte/nodepass)](https://goreportcard.com/report/github.com/yosebyte/nodepass)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yosebyte/nodepass.svg)](https://pkg.go.dev/github.com/yosebyte/nodepass)
 ![GitHub last commit](https://img.shields.io/github/last-commit/yosebyte/nodepass)
 
 [English](README.md) | 简体中文
 </div>
 
-**NodePass**是一款通用、轻量的TCP/UDP隧道解决方案。它基于创新的三层架构（服务器-客户端-主控）构建，优雅地实现了控制与数据通道的分离，同时提供直观的零配置命令语法。系统通过预建立连接的主动连接池消除了延迟，结合分级TLS安全选项与优化的数据传输机制，性能表现卓越。其最具特色的功能之一是TCP与UDP之间的无缝协议转换，让应用能够跨越协议受限的网络进行通信。其能够智能适应网络波动，即使在复杂环境中也能保持稳定性能，同时高效利用系统资源。无论是穿越防火墙和NAT，还是连接复杂的代理配置，它都为DevOps专业人员和系统管理员提供了一个兼具先进功能与卓越易用性的完美平衡方案。
+**NodePass**是一款通用、轻量的TCP/UDP隧道解决方案。它基于创新的三层架构（服务端-客户端-主控）构建，优雅地实现了控制与数据通道的分离，同时提供直观的零配置命令语法。系统通过预建立连接的主动连接池消除了延迟，结合分级TLS安全选项与优化的数据传输机制，性能表现卓越。其最具特色的功能之一是TCP与UDP之间的无缝协议转换，让应用能够跨越协议受限的网络进行通信。其能够智能适应网络波动，即使在复杂环境中也能保持稳定性能，同时高效利用系统资源。无论是穿越防火墙和NAT，还是连接复杂的代理配置，它都为DevOps专业人员和系统管理员提供了一个兼具先进功能与卓越易用性的完美平衡方案。
 
 ## 💎 核心功能
 
 - **🔀 多种操作模式**
-  - 服务器模式接受传入隧道连接并提供可配置的安全选项
-  - 客户端模式用于建立与隧道服务器的出站连接
+  - 服务端模式接受传入隧道连接并提供可配置的安全选项
+  - 客户端模式用于建立与隧道服务端的出站连接
   - 主控模式提供RESTful API进行动态实例管理
 
 - **🌍 协议支持**
@@ -32,26 +35,22 @@
   - 智能连接池，具备实时容量自适应功能
   - 基于网络状况的动态间隔调整
   - 高负载下保持最小资源占用
-  - 网络中断后自动恢复连接
 
 - **🧰 简单配置**
   - 零配置文件设计
   - 简洁的命令行参数
   - 环境变量支持性能精细调优
-  - 为大多数使用场景提供智能默认值
 
 ## 📋 快速开始
 
 ### 📥 安装方法
 
 - **预编译二进制文件**: 从[发布页面](https://github.com/yosebyte/nodepass/releases)下载。
-- **Go安装**: `go install github.com/yosebyte/nodepass/cmd/nodepass@latest`
 - **容器镜像**: `docker pull ghcr.io/yosebyte/nodepass:latest`
-- **管理脚本**: `bash <(curl -sL https://cdn.yobc.de/shell/nodepass.sh)`
 
 ### 🚀 基本用法
 
-**服务器模式**
+**服务端模式**
 ```bash
 nodepass "server://:10101/127.0.0.1:8080?log=debug&tls=1"
 ```
@@ -66,15 +65,6 @@ nodepass client://server.example.com:10101/127.0.0.1:8080
 nodepass "master://:10101/api?log=debug&tls=1"
 ```
 
-## 🔧 常见使用场景
-
-- **远程访问**: 从外部位置安全访问内部服务
-- **防火墙绕过**: 在限制性网络环境中导航
-- **安全微服务**: 在分布式组件之间建立加密通道
-- **数据库保护**: 在保持服务器隔离的同时实现安全数据库访问
-- **物联网通信**: 连接不同网络段上的设备
-- **渗透测试**: 为红队行动和安全评估创建安全隧道
-
 ## 📚 文档
 
 探索完整文档以了解更多关于NodePass的信息：
@@ -87,32 +77,36 @@ nodepass "master://:10101/api?log=debug&tls=1"
 - [工作原理](/docs/zh/how-it-works.md)
 - [故障排除](/docs/zh/troubleshooting.md)
 
-## 👥 贡献
+## 🌐 生态系统
 
-欢迎贡献！请随时提交问题、功能请求或拉取请求。
+[NodePassProject](https://github.com/NodePassProject) 组织开发了各种前端应用和辅助工具来增强 NodePass 体验：
+
+- **[NodePassDash](https://github.com/NodePassProject/NodePassDash)**: 一个现代化的 NodePass 管理界面，提供主控管理、实例管理、流量统计、历史记录等功能。
+
+- **[npsh](https://github.com/NodePassProject/npsh)**: 一个便捷的脚本，为 NodePass master API 模式提供简单易用的安装、配置和管理功能。
 
 ## 💬 讨论
 
-加入我们的[讨论区](https://github.com/yosebyte/nodepass/discussions)分享您的经验和想法。
+- 关注我们的 [Telegram 频道](https://t.me/NodePassChannel) 获取最新更新和社区支持。
 
-加入我们的[Telegram 频道](https://t.me/NodePassChannel) 获取最新更新和社区支持。
+- 加入我们的 [Discord](https://discord.gg/5TdhkQnJ) 和 [Telegram 群组](https://t.me/NodePassGroup) 分享经验和想法。
 
 ## 📄 许可协议
 
-`NodePass`项目根据[MIT许可证](LICENSE)授权。
+`NodePass`项目根据[BSD 3-Clause许可证](LICENSE)授权。
 
 ## 🤝 赞助商
 
 <table>
   <tr>
-    <td width="220" align="center">
-      <a href="https://as211392.com">
-        <img src="https://cdn.yobc.de/assets/dreamcloud.png" width="200" alt="DreamCloud">
-      </a>
+    <td width="200" align="center">
+      <a href="https://whmcs.as211392.com"><img src="https://cdn.yobc.de/assets/dreamcloud.png"></a>
     </td>
-    <td>
-      <div><b>DreamCloud</b></div>
-      <div><a href="https://as211392.com">https://as211392.com</a></div>
+    <td width="200" align="center">
+      <a href="https://zmto.com"><img src="https://cdn.yobc.de/assets/zmto.png"></a>
+    </td>
+    <td width="200" align="center">
+      <a href="https://netjett.com"><img src="https://cdn.yobc.de/assets/netjett.png"></a>
     </td>
   </tr>
 </table>

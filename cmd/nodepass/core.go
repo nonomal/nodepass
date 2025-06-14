@@ -5,49 +5,36 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/NodePassProject/cert"
 	"github.com/yosebyte/nodepass/internal"
-	x "github.com/yosebyte/x/tls"
 )
 
-// 根据URL方案分派到不同的运行模式
+// coreDispatch 根据URL方案分派到不同的运行模式
 func coreDispatch(parsedURL *url.URL) {
-	switch parsedURL.Scheme {
-	case "server":
-		runServer(parsedURL)
+	var core interface{ Run() }
+
+	switch scheme := parsedURL.Scheme; scheme {
+	case "server", "master":
+		tlsCode, tlsConfig := getTLSProtocol(parsedURL)
+		if scheme == "server" {
+			core = internal.NewServer(parsedURL, tlsCode, tlsConfig, logger)
+		} else {
+			core = internal.NewMaster(parsedURL, tlsCode, tlsConfig, logger)
+		}
 	case "client":
-		runClient(parsedURL)
-	case "master":
-		runMaster(parsedURL)
+		core = internal.NewClient(parsedURL, logger)
 	default:
-		logger.Fatal("Unknown core: %v", parsedURL.Scheme)
+		logger.Error("Unknown core: %v", scheme)
 		getExitInfo()
 	}
+
+	core.Run()
 }
 
-// 运行服务器模式
-func runServer(parsedURL *url.URL) {
-	tlsCode, tlsConfig := getTLSProtocol(parsedURL)
-	server := internal.NewServer(parsedURL, tlsCode, tlsConfig, logger)
-	server.Manage()
-}
-
-// 运行客户端模式
-func runClient(parsedURL *url.URL) {
-	client := internal.NewClient(parsedURL, logger)
-	client.Manage()
-}
-
-// 运行主控模式
-func runMaster(parsedURL *url.URL) {
-	tlsCode, tlsConfig := getTLSProtocol(parsedURL)
-	master := internal.NewMaster(parsedURL, tlsCode, tlsConfig, logger)
-	master.Manage()
-}
-
-// 获取TLS配置
+// getTLSProtocol 获取TLS配置
 func getTLSProtocol(parsedURL *url.URL) (string, *tls.Config) {
 	// 生成基本TLS配置
-	tlsConfig, err := x.GenerateTLSConfig("yosebyte/nodepass:" + version)
+	tlsConfig, err := cert.NewTLSConfig("yosebyte/nodepass:" + version)
 	if err != nil {
 		logger.Error("Generate failed: %v", err)
 		logger.Warn("TLS code-0: nil cert")
@@ -102,7 +89,7 @@ func getTLSProtocol(parsedURL *url.URL) (string, *tls.Config) {
 		if cert.Leaf != nil {
 			logger.Info("TLS code-2: %v with TLS 1.3", cert.Leaf.Subject.CommonName)
 		} else {
-			logger.Warn("TLS code-2: unknown with TLS 1.3")
+			logger.Warn("TLS code-2: unknown cert name with TLS 1.3")
 		}
 		return tlsCode, tlsConfig
 

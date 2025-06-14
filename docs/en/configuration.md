@@ -10,7 +10,7 @@ NodePass provides five log verbosity levels that control the amount of informati
 - `info`: General operational information (default) - shows startup, shutdown, and key events
 - `warn`: Warning conditions - only shows potential issues that don't affect core functionality
 - `error`: Error conditions - shows only problems that affect functionality
-- `fatal`: Critical conditions - shows only severe errors that cause termination
+- `event`: Event recording - shows important operational events and traffic statistics
 
 You can set the log level in the command URL:
 
@@ -56,9 +56,10 @@ NodePass behavior can be fine-tuned using environment variables. Below is the co
 | `NP_MIN_POOL_CAPACITY` | Minimum connection pool size | 16 | `export NP_MIN_POOL_CAPACITY=32` |
 | `NP_MAX_POOL_CAPACITY` | Maximum connection pool size | 1024 | `export NP_MAX_POOL_CAPACITY=4096` |
 | `NP_UDP_DATA_BUF_SIZE` | Buffer size for UDP packets | 8192 | `export NP_UDP_DATA_BUF_SIZE=16384` |
-| `NP_UDP_READ_TIMEOUT` | Timeout for UDP read operations | 5s | `export NP_UDP_READ_TIMEOUT=10s` |
-| `NP_UDP_DIAL_TIMEOUT` | Timeout for establishing UDP connections | 5s | `export NP_UDP_DIAL_TIMEOUT=10s` |
-| `NP_TCP_DIAL_TIMEOUT` | Timeout for establishing TCP connections | 5s | `export NP_TCP_DIAL_TIMEOUT=10s` |
+| `NP_UDP_READ_TIMEOUT` | Timeout for UDP read operations | 15s | `export NP_UDP_READ_TIMEOUT=30s` |
+| `NP_TCP_READ_TIMEOUT` | Timeout for TCP read operations | 15s | `export NP_TCP_READ_TIMEOUT=30s` |
+| `NP_UDP_DIAL_TIMEOUT` | Timeout for establishing UDP connections | 15s | `export NP_UDP_DIAL_TIMEOUT=30s` |
+| `NP_TCP_DIAL_TIMEOUT` | Timeout for establishing TCP connections | 15s | `export NP_TCP_DIAL_TIMEOUT=30s` |
 | `NP_MIN_POOL_INTERVAL` | Minimum interval between connection creations | 1s | `export NP_MIN_POOL_INTERVAL=500ms` |
 | `NP_MAX_POOL_INTERVAL` | Maximum interval between connection creations | 5s | `export NP_MAX_POOL_INTERVAL=3s` |
 | `NP_REPORT_INTERVAL` | Interval for health check reports | 5s | `export NP_REPORT_INTERVAL=10s` |
@@ -116,6 +117,20 @@ For applications relying heavily on UDP traffic:
   - Increase for high-latency networks or applications with slow response times
   - Decrease for low-latency applications requiring quick failover
 
+### TCP Settings
+
+For optimizing TCP connections:
+
+- `NP_TCP_READ_TIMEOUT`: Timeout for TCP read operations
+  - Increase for high-latency networks or servers with slow response times
+  - Decrease for applications that need to detect disconnections quickly
+  - Affects wait time during data transfer phases
+
+- `NP_TCP_DIAL_TIMEOUT`: Timeout for establishing TCP connections
+  - Increase for unstable network conditions
+  - Decrease for applications that need quick connection success/failure determination
+  - Affects initial connection establishment phase
+
 ### Service Management Settings
 
 - `NP_REPORT_INTERVAL`: Controls how frequently health status is reported
@@ -162,7 +177,7 @@ export NP_MAX_POOL_CAPACITY=2048
 export NP_MIN_POOL_INTERVAL=100ms
 export NP_MAX_POOL_INTERVAL=1s
 export NP_SEMAPHORE_LIMIT=4096
-export NP_UDP_READ_TIMEOUT=2s
+export NP_UDP_READ_TIMEOUT=10s
 export NP_REPORT_INTERVAL=1s
 ```
 

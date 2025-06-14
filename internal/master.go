@@ -26,13 +26,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yosebyte/x/log"
+	"github.com/NodePassProject/logs"
 )
 
 // 常量定义
 const (
-	openAPIVersion = "v1"
-	stateFileName  = "nodepass.gob"
+	openAPIVersion = "v1"           // OpenAPI版本
+	stateFileName  = "nodepass.gob" // 实例状态持久化文件名
+	sseRetryTime   = 3000           // 重试间隔时间（毫秒）
+	apiKeyID       = "********"     // API Key的特殊ID
 )
 
 // Swagger UI HTML模板
@@ -58,20 +60,22 @@ const swaggerUIHTML = `<!DOCTYPE html>
 
 // Master 实现主控模式功能
 type Master struct {
-	Common                 // 继承通用功能
-	prefix    string       // API前缀
-	instances sync.Map     // 实例映射表
-	server    *http.Server // HTTP服务器
-	logLevel  string       // 日志级别
-	tlsConfig *tls.Config  // TLS配置
-	masterURL *url.URL     // 主控URL
-	statePath string       // 实例状态持久化文件路径
+	Common                            // 继承通用功能
+	prefix        string              // API前缀
+	instances     sync.Map            // 实例映射表
+	server        *http.Server        // HTTP服务器
+	logLevel      string              // 日志级别
+	tlsConfig     *tls.Config         // TLS配置
+	masterURL     *url.URL            // 主控URL
+	statePath     string              // 实例状态持久化文件路径
+	subscribers   sync.Map            // SSE订阅者映射表
+	notifyChannel chan *InstanceEvent // 事件通知通道
 }
 
 // Instance 实例信息
 type Instance struct {
 	ID         string             `json:"id"`        // 实例ID
-	Type       string             `json:"type"`      // 实例类型（client或server）
+	Type       string             `json:"type"`      // 实例类型
 	Status     string             `json:"status"`    // 实例状态
 	URL        string             `json:"url"`       // 实例URL
 	TCPRX      uint64             `json:"tcprx"`     // TCP接收字节数
@@ -81,6 +85,14 @@ type Instance struct {
 	cmd        *exec.Cmd          `json:"-" gob:"-"` // 命令对象（不序列化）
 	stopped    chan struct{}      `json:"-" gob:"-"` // 停止信号通道（不序列化）
 	cancelFunc context.CancelFunc `json:"-" gob:"-"` // 取消函数（不序列化）
+}
+
+// InstanceEvent 实例事件信息
+type InstanceEvent struct {
+	Type     string    `json:"type"`           // 事件类型：initial, create, update, delete, shutdown, log
+	Time     time.Time `json:"time"`           // 事件时间
+	Instance *Instance `json:"instance"`       // 关联的实例
+	Logs     string    `json:"logs,omitempty"` // 日志内容，仅当Type为log时有效
 }
 
 // InstanceLogWriter 实例日志写入器
@@ -120,10 +132,24 @@ func (w *InstanceLogWriter) Write(p []byte) (n int, err error) {
 				}
 			}
 			w.master.instances.Store(w.instanceID, w.instance)
-			continue
+
+			// 发送流量更新事件
+			w.master.notifyChannel <- &InstanceEvent{
+				Type:     "update",
+				Time:     time.Now(),
+				Instance: w.instance,
+			}
 		}
-		// 输出常规日志
+		// 输出日志加实例ID
 		fmt.Fprintf(w.target, "%s [%s]\n", line, w.instanceID)
+
+		// 发送日志事件
+		w.master.notifyChannel <- &InstanceEvent{
+			Type:     "log",
+			Time:     time.Now(),
+			Instance: w.instance,
+			Logs:     line,
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -132,15 +158,15 @@ func (w *InstanceLogWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// 设置跨域响应头
+// setCorsHeaders 设置跨域响应头
 func setCorsHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, PATCH, POST, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, Cache-Control")
 }
 
 // NewMaster 创建新的主控实例
-func NewMaster(parsedURL *url.URL, tlsCode string, tlsConfig *tls.Config, logger *log.Logger) *Master {
+func NewMaster(parsedURL *url.URL, tlsCode string, tlsConfig *tls.Config, logger *logs.Logger) *Master {
 	// 解析主机地址
 	host, err := net.ResolveTCPAddr("tcp", parsedURL.Host)
 	if err != nil {
@@ -151,7 +177,7 @@ func NewMaster(parsedURL *url.URL, tlsCode string, tlsConfig *tls.Config, logger
 	// 设置API前缀
 	prefix := parsedURL.Path
 	if prefix == "" || prefix == "/" {
-		prefix = fmt.Sprintf("/%s", generateID())
+		prefix = "/api"
 	} else {
 		prefix = strings.TrimRight(prefix, "/")
 	}
@@ -165,48 +191,118 @@ func NewMaster(parsedURL *url.URL, tlsCode string, tlsConfig *tls.Config, logger
 			tlsCode: tlsCode,
 			logger:  logger,
 		},
-		prefix:    fmt.Sprintf("%s/%s", prefix, openAPIVersion),
-		logLevel:  parsedURL.Query().Get("log"),
-		tlsConfig: tlsConfig,
-		masterURL: parsedURL,
-		statePath: filepath.Join(stateDir, stateFileName),
+		prefix:        fmt.Sprintf("%s/%s", prefix, openAPIVersion),
+		logLevel:      parsedURL.Query().Get("log"),
+		tlsConfig:     tlsConfig,
+		masterURL:     parsedURL,
+		statePath:     filepath.Join(stateDir, stateFileName),
+		notifyChannel: make(chan *InstanceEvent, 1024),
 	}
-	master.tunnelAddr = host
+	master.tunnelTCPAddr = host
 
 	// 加载持久化的实例状态
 	master.loadState()
 
+	// 启动事件分发器
+	master.startEventDispatcher()
+
 	return master
 }
 
-// Manage 管理主控生命周期
-func (m *Master) Manage() {
+// Run 管理主控生命周期
+func (m *Master) Run() {
 	m.logger.Info("Master started: %v%v", m.tunnelAddr, m.prefix)
+
+	// 初始化API Key
+	apiKey, ok := m.findInstance(apiKeyID)
+	if !ok {
+		// 如果不存在API Key实例，则创建一个
+		apiKey = &Instance{
+			ID:  apiKeyID,
+			URL: generateAPIKey(),
+		}
+		m.instances.Store(apiKeyID, apiKey)
+		m.saveState()
+		m.logger.Info("API Key created: %v", apiKey.URL)
+	} else {
+		m.logger.Info("API Key loaded: %v", apiKey.URL)
+	}
 
 	// 设置HTTP路由
 	mux := http.NewServeMux()
-	endpoints := map[string]http.HandlerFunc{
-		fmt.Sprintf("%s/instances", m.prefix):    m.handleInstances,
-		fmt.Sprintf("%s/instances/", m.prefix):   m.handleInstanceDetail,
+
+	// 创建需要API Key认证的端点
+	protectedEndpoints := map[string]http.HandlerFunc{
+		fmt.Sprintf("%s/instances", m.prefix):  m.handleInstances,
+		fmt.Sprintf("%s/instances/", m.prefix): m.handleInstanceDetail,
+		fmt.Sprintf("%s/events", m.prefix):     m.handleSSE,
+	}
+
+	// 创建不需要API Key认证的端点
+	publicEndpoints := map[string]http.HandlerFunc{
 		fmt.Sprintf("%s/openapi.json", m.prefix): m.handleOpenAPISpec,
 		fmt.Sprintf("%s/docs", m.prefix):         m.handleSwaggerUI,
 	}
 
-	// 注册路由处理器
-	for path, handler := range endpoints {
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+	// API Key 认证中间件
+	apiKeyMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// 设置跨域响应头
 			setCorsHeaders(w)
 			if r.Method == "OPTIONS" {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-			handler(w, r)
-		})
+
+			// 读取API Key，如果存在的话
+			apiKeyInstance, keyExists := m.findInstance(apiKeyID)
+			if keyExists && apiKeyInstance.URL != "" {
+				// 检查请求头中的API Key
+				reqAPIKey := r.Header.Get("X-API-Key")
+				if reqAPIKey == "" {
+					// API Key不存在，返回未授权错误
+					httpError(w, "Unauthorized: API key required", http.StatusUnauthorized)
+					return
+				}
+
+				// 验证API Key
+				if reqAPIKey != apiKeyInstance.URL {
+					httpError(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
+					return
+				}
+			}
+
+			// 调用原始处理器
+			next(w, r)
+		}
+	}
+
+	// CORS 中间件
+	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// 设置跨域响应头
+			setCorsHeaders(w)
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			next(w, r)
+		}
+	}
+
+	// 注册受保护的端点
+	for path, handler := range protectedEndpoints {
+		mux.HandleFunc(path, apiKeyMiddleware(handler))
+	}
+
+	// 注册公共端点
+	for path, handler := range publicEndpoints {
+		mux.HandleFunc(path, corsMiddleware(handler))
 	}
 
 	// 创建HTTP服务器
 	m.server = &http.Server{
-		Addr:      m.tunnelAddr.String(),
+		Addr:      m.tunnelTCPAddr.String(),
 		ErrorLog:  m.logger.StdLogger(),
 		Handler:   mux,
 		TLSConfig: m.tlsConfig,
@@ -243,11 +339,52 @@ func (m *Master) Manage() {
 // Shutdown 关闭主控
 func (m *Master) Shutdown(ctx context.Context) error {
 	return m.shutdown(ctx, func() {
+		// 声明一个已关闭通道的集合，避免重复关闭
+		var closedChannels sync.Map
+
 		var wg sync.WaitGroup
+
+		// 给所有订阅者一个关闭通知
+		m.subscribers.Range(func(key, value any) bool {
+			subscriberChan := value.(chan *InstanceEvent)
+			wg.Add(1)
+			go func(ch chan *InstanceEvent) {
+				defer wg.Done()
+				// 非阻塞的方式发送关闭事件
+				select {
+				case ch <- &InstanceEvent{
+					Type: "shutdown",
+					Time: time.Now(),
+				}:
+				default:
+					// 不可用，忽略
+				}
+			}(subscriberChan)
+			return true
+		})
+
+		// 等待所有订阅者处理完关闭事件
+		time.Sleep(100 * time.Millisecond)
+
+		// 关闭所有订阅者通道
+		m.subscribers.Range(func(key, value any) bool {
+			subscriberChan := value.(chan *InstanceEvent)
+			// 检查通道是否已关闭，如果没有则关闭它
+			if _, loaded := closedChannels.LoadOrStore(subscriberChan, true); !loaded {
+				wg.Add(1)
+				go func(k any, ch chan *InstanceEvent) {
+					defer wg.Done()
+					close(ch)
+					m.subscribers.Delete(k)
+				}(key, subscriberChan)
+			}
+			return true
+		})
 
 		// 停止所有运行中的实例
 		m.instances.Range(func(key, value any) bool {
 			instance := value.(*Instance)
+			// 如果实例正在运行，则停止它
 			if instance.Status == "running" && instance.cmd != nil && instance.cmd.Process != nil {
 				wg.Add(1)
 				go func(inst *Instance) {
@@ -259,6 +396,9 @@ func (m *Master) Shutdown(ctx context.Context) error {
 		})
 
 		wg.Wait()
+
+		// 关闭事件通知通道，停止事件分发器
+		close(m.notifyChannel)
 
 		// 保存实例状态
 		if err := m.saveState(); err != nil {
@@ -302,25 +442,34 @@ func (m *Master) saveState() error {
 		return err
 	}
 	tempPath := tempFile.Name()
-	defer os.Remove(tempPath) // 确保在任何情况下删除临时文件
+
+	// 删除临时文件的函数，只在错误情况下使用
+	removeTemp := func() {
+		if _, err := os.Stat(tempPath); err == nil {
+			os.Remove(tempPath)
+		}
+	}
 
 	// 编码数据
 	encoder := gob.NewEncoder(tempFile)
 	if err := encoder.Encode(persistentData); err != nil {
 		m.logger.Error("Encode instances failed: %v", err)
 		tempFile.Close()
+		removeTemp()
 		return err
 	}
 
 	// 关闭文件
 	if err := tempFile.Close(); err != nil {
 		m.logger.Error("Close temp failed: %v", err)
+		removeTemp()
 		return err
 	}
 
 	// 原子地替换文件
 	if err := os.Rename(tempPath, m.statePath); err != nil {
 		m.logger.Error("Rename temp failed: %v", err)
+		removeTemp()
 		return err
 	}
 
@@ -436,6 +585,13 @@ func (m *Master) handleInstances(w http.ResponseWriter, r *http.Request) {
 		}()
 		writeJSON(w, http.StatusCreated, instance)
 
+		// 发送创建事件
+		m.notifyChannel <- &InstanceEvent{
+			Type:     "create",
+			Time:     time.Now(),
+			Instance: instance,
+		}
+
 	default:
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -459,46 +615,197 @@ func (m *Master) handleInstanceDetail(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		// 获取实例信息
-		writeJSON(w, http.StatusOK, instance)
-
+		m.handleGetInstance(w, instance)
 	case http.MethodPatch:
-		// 更新实例状态
-		var reqData struct {
-			Action string `json:"action"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&reqData); err == nil {
-			switch reqData.Action {
-			case "start":
-				if instance.Status != "running" {
-					go m.startInstance(instance)
-				}
-			case "stop":
-				if instance.Status == "running" {
-					m.stopInstance(instance)
-				}
-			case "restart":
-				if instance.Status == "running" {
-					m.stopInstance(instance)
-				}
-				go m.startInstance(instance)
-			}
-		}
-		writeJSON(w, http.StatusOK, instance)
-
+		m.handlePatchInstance(w, r, id, instance)
 	case http.MethodDelete:
-		// 删除实例
-		if instance.Status == "running" {
-			m.stopInstance(instance)
-		}
-		m.instances.Delete(id)
-		// 删除实例后保存状态
-		m.saveState()
-		w.WriteHeader(http.StatusNoContent)
-
+		m.handleDeleteInstance(w, id, instance)
 	default:
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleGetInstance 处理获取实例信息请求
+func (m *Master) handleGetInstance(w http.ResponseWriter, instance *Instance) {
+	writeJSON(w, http.StatusOK, instance)
+}
+
+// handlePatchInstance 处理更新实例状态请求
+func (m *Master) handlePatchInstance(w http.ResponseWriter, r *http.Request, id string, instance *Instance) {
+	var reqData struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err == nil {
+		if id == apiKeyID {
+			// API Key实例只允许restart操作
+			if reqData.Action == "restart" {
+				m.regenerateAPIKey(instance)
+			}
+		} else if reqData.Action != "" {
+			m.processInstanceAction(instance, reqData.Action)
+		}
+	}
+	writeJSON(w, http.StatusOK, instance)
+
+	// 发送更新事件
+	m.notifyChannel <- &InstanceEvent{
+		Type:     "update",
+		Time:     time.Now(),
+		Instance: instance,
+	}
+}
+
+// regenerateAPIKey 重新生成API Key
+func (m *Master) regenerateAPIKey(instance *Instance) {
+	instance.URL = generateAPIKey()
+	m.instances.Store(apiKeyID, instance)
+	m.saveState()
+	m.logger.Info("API Key regenerated: %v", instance.URL)
+}
+
+// processInstanceAction 处理实例操作
+func (m *Master) processInstanceAction(instance *Instance, action string) {
+	switch action {
+	case "start":
+		if instance.Status != "running" {
+			go m.startInstance(instance)
+		}
+	case "stop":
+		if instance.Status == "running" {
+			m.stopInstance(instance)
+		}
+	case "restart":
+		if instance.Status == "running" {
+			m.stopInstance(instance)
+		}
+		go m.startInstance(instance)
+	}
+}
+
+// handleDeleteInstance 处理删除实例请求
+func (m *Master) handleDeleteInstance(w http.ResponseWriter, id string, instance *Instance) {
+	// API Key实例不允许删除
+	if id == apiKeyID {
+		httpError(w, "Forbidden: API Key", http.StatusForbidden)
+		return
+	}
+
+	if instance.Status == "running" {
+		m.stopInstance(instance)
+	}
+	m.instances.Delete(id)
+	// 删除实例后保存状态
+	m.saveState()
+	w.WriteHeader(http.StatusNoContent)
+
+	// 发送删除事件
+	m.notifyChannel <- &InstanceEvent{
+		Type:     "delete",
+		Time:     time.Now(),
+		Instance: instance,
+	}
+}
+
+// handleSSE 处理SSE连接请求
+func (m *Master) handleSSE(w http.ResponseWriter, r *http.Request) {
+	// 验证是否为GET请求
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 设置SSE相关响应头
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// 创建唯一的订阅者ID
+	subscriberID := generateID()
+
+	// 创建一个通道用于接收事件
+	events := make(chan *InstanceEvent, 10)
+
+	// 注册订阅者
+	m.subscribers.Store(subscriberID, events)
+	defer m.subscribers.Delete(subscriberID)
+
+	// 发送初始重试间隔
+	fmt.Fprintf(w, "retry: %d\n\n", sseRetryTime)
+
+	// 获取当前所有实例并发送初始状态
+	m.instances.Range(func(_, value any) bool {
+		instance := value.(*Instance)
+		event := &InstanceEvent{
+			Type:     "initial",
+			Time:     time.Now(),
+			Instance: instance,
+		}
+
+		data, err := json.Marshal(event)
+		if err == nil {
+			fmt.Fprintf(w, "event: instance\ndata: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		}
+		return true
+	})
+
+	// 设置客户端连接超时
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// 客户端连接关闭标志
+	connectionClosed := make(chan struct{})
+
+	// 监听客户端连接是否关闭，但不关闭通道，留给Shutdown处理
+	go func() {
+		<-ctx.Done()
+		close(connectionClosed)
+		// 只从映射表中移除，但不关闭通道
+		m.subscribers.Delete(subscriberID)
+	}()
+
+	// 持续发送事件到客户端
+	for {
+		select {
+		case <-connectionClosed:
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+
+			// 序列化事件数据
+			data, err := json.Marshal(event)
+			if err != nil {
+				m.logger.Error("Event marshal error: %v", err)
+				continue
+			}
+
+			// 发送事件
+			fmt.Fprintf(w, "event: instance\ndata: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		}
+	}
+}
+
+// startEventDispatcher 启动事件分发器
+func (m *Master) startEventDispatcher() {
+	go func() {
+		for event := range m.notifyChannel {
+			// 向所有订阅者分发事件
+			m.subscribers.Range(func(_, value any) bool {
+				eventChan := value.(chan *InstanceEvent)
+				// 非阻塞方式发送事件
+				select {
+				case eventChan <- event:
+				default:
+					// 不可用，忽略
+				}
+				return true
+			})
+		}
+	}()
 }
 
 // findInstance 查找实例
@@ -519,6 +826,12 @@ func (m *Master) startInstance(instance *Instance) {
 			return
 		}
 	}
+
+	// 保存原始流量统计
+	originalTCPRX := instance.TCPRX
+	originalTCPTX := instance.TCPTX
+	originalUDPRX := instance.UDPRX
+	originalUDPTX := instance.UDPTX
 
 	// 获取可执行文件路径
 	execPath, err := os.Executable()
@@ -548,10 +861,24 @@ func (m *Master) startInstance(instance *Instance) {
 	} else {
 		instance.cmd = cmd
 		instance.Status = "running"
+
+		// 恢复原始流量统计
+		instance.TCPRX = originalTCPRX
+		instance.TCPTX = originalTCPTX
+		instance.UDPRX = originalUDPRX
+		instance.UDPTX = originalUDPTX
+
 		go m.monitorInstance(instance, cmd)
 	}
 
 	m.instances.Store(instance.ID, instance)
+
+	// 发送启动事件
+	m.notifyChannel <- &InstanceEvent{
+		Type:     "update",
+		Time:     time.Now(),
+		Instance: instance,
+	}
 }
 
 // monitorInstance 监控实例状态
@@ -577,6 +904,18 @@ func (m *Master) monitorInstance(instance *Instance, cmd *exec.Cmd) {
 					instance.Status = "stopped"
 				}
 				m.instances.Store(instance.ID, instance)
+
+				// 安全地发送停止事件，避免向已关闭的通道发送
+				select {
+				case m.notifyChannel <- &InstanceEvent{
+					Type:     "update",
+					Time:     time.Now(),
+					Instance: instance,
+				}:
+					// 成功发送事件
+				default:
+					// 不可用，忽略
+				}
 			}
 		}
 	}
@@ -624,6 +963,13 @@ func (m *Master) stopInstance(instance *Instance) {
 
 	// 保存状态变更
 	m.saveState()
+
+	// 发送停止事件
+	m.notifyChannel <- &InstanceEvent{
+		Type:     "update",
+		Time:     time.Now(),
+		Instance: instance,
+	}
 }
 
 // enhanceURL 增强URL，添加日志级别和TLS配置
@@ -641,7 +987,7 @@ func (m *Master) enhanceURL(instanceURL string, instanceType string) string {
 		query.Set("log", m.logLevel)
 	}
 
-	// 为服务器实例设置TLS配置
+	// 为服务端实例设置TLS配置
 	if instanceType == "server" && m.tlsCode != "0" {
 		if query.Get("tls") == "" {
 			query.Set("tls", m.tlsCode)
@@ -669,6 +1015,13 @@ func generateID() string {
 	return hex.EncodeToString(bytes)
 }
 
+// generateAPIKey 生成API Key
+func generateAPIKey() string {
+	bytes := make([]byte, 16)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
 // httpError 返回HTTP错误
 func httpError(w http.ResponseWriter, message string, statusCode int) {
 	setCorsHeaders(w)
@@ -688,25 +1041,32 @@ func writeJSON(w http.ResponseWriter, statusCode int, data any) {
 // generateOpenAPISpec 生成OpenAPI规范文档
 func generateOpenAPISpec() string {
 	return fmt.Sprintf(`{
-  "openapi": "3.0.0",
+  "openapi": "3.1.1",
   "info": {
     "title": "NodePass API",
     "description": "API for managing NodePass server and client instances",
     "version": "%s"
   },
   "servers": [{"url": "/{prefix}/v1", "variables": {"prefix": {"default": "api", "description": "API prefix path"}}}],
+  "security": [{"ApiKeyAuth": []}],
   "paths": {
     "/instances": {
       "get": {
         "summary": "List all instances",
-        "responses": {"200": {"description": "Success", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Instance"}}}}}}
+        "security": [{"ApiKeyAuth": []}],
+        "responses": {
+          "200": {"description": "Success", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Instance"}}}}},
+          "401": {"description": "Unauthorized"}
+        }
       },
       "post": {
         "summary": "Create a new instance",
+        "security": [{"ApiKeyAuth": []}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateInstanceRequest"}}}},
         "responses": {
           "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Instance"}}}},
           "400": {"description": "Invalid input"},
+		  "401": {"description": "Unauthorized"},
           "404": {"description": "Not found"}
         }
       }
@@ -715,26 +1075,71 @@ func generateOpenAPISpec() string {
       "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
       "get": {
         "summary": "Get instance details",
+        "security": [{"ApiKeyAuth": []}],
         "responses": {
           "200": {"description": "Success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Instance"}}}},
+          "401": {"description": "Unauthorized"},
           "404": {"description": "Not found"}
         }
       },
       "patch": {
         "summary": "Update instance",
+        "security": [{"ApiKeyAuth": []}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateInstanceRequest"}}}},
         "responses": {
           "200": {"description": "Success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Instance"}}}},
+          "401": {"description": "Unauthorized"},
           "404": {"description": "Not found"}
         }
       },
       "delete": {
         "summary": "Delete instance",
-        "responses": {"204": {"description": "Deleted"}, "404": {"description": "Not found"}}
+        "security": [{"ApiKeyAuth": []}],
+        "responses": {
+          "204": {"description": "Deleted"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Subscribe to instance events",
+		"security": [{"ApiKeyAuth": []}],
+        "responses": {
+          "200": {"description": "Success", "content": {"text/event-stream": {}}},
+		  "401": {"description": "Unauthorized"},
+          "405": {"description": "Method not allowed"}
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "Get OpenAPI specification",
+        "responses": {
+          "200": {"description": "Success", "content": {"application/json": {}}}
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "summary": "Get Swagger UI",
+        "responses": {
+          "200": {"description": "Success", "content": {"text/html": {}}}
+        }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API Key for authentication"
+      }
+    },
     "schemas": {
       "Instance": {
         "type": "object",
@@ -742,11 +1147,11 @@ func generateOpenAPISpec() string {
           "id": {"type": "string", "description": "Unique identifier"},
           "type": {"type": "string", "enum": ["client", "server"], "description": "Type of instance"},
           "status": {"type": "string", "enum": ["running", "stopped", "error"], "description": "Instance status"},
-          "url": {"type": "string", "description": "Command string"},
-          "tcprx": {"type": "integer", "format": "int64", "description": "TCP bytes received"},
-          "tcptx": {"type": "integer", "format": "int64", "description": "TCP bytes sent"},
-          "udprx": {"type": "integer", "format": "int64", "description": "UDP bytes received"},
-          "udptx": {"type": "integer", "format": "int64", "description": "UDP bytes sent"}
+          "url": {"type": "string", "description": "Command string or API Key"},
+          "tcprx": {"type": "integer", "description": "TCP received bytes"},
+          "tcptx": {"type": "integer", "description": "TCP transmitted bytes"},
+          "udprx": {"type": "integer", "description": "UDP received bytes"},
+          "udptx": {"type": "integer", "description": "UDP transmitted bytes"}
         }
       },
       "CreateInstanceRequest": {
@@ -756,7 +1161,9 @@ func generateOpenAPISpec() string {
       },
       "UpdateInstanceRequest": {
         "type": "object",
-        "properties": {"action": {"type": "string", "enum": ["start", "stop", "restart"], "description": "Action"}}
+        "properties": {
+          "action": {"type": "string", "enum": ["start", "stop", "restart"], "description": "Action for the instance"}
+        }
       }
     }
   }
